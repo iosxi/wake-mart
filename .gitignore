@@ -1,0 +1,6 @@
+build/
+release-notes.md
+*.ini
+*.ini.tmp
+*.log
+*.log.old

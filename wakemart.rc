@@ -1,0 +1,148 @@
+#pragma code_page(65001)
+#include <windows.h>
+#include <commctrl.h>
+#include "resource.h"
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+// ツールチェーン既定の manifest と同じ言語にして置き換えさせる
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "wakemart.manifest"
+
+LANGUAGE LANG_JAPANESE, SUBLANG_DEFAULT
+IDI_APP ICON "wakemart.ico"
+
+IDD_MAIN DIALOGEX 0, 0, 420, 240
+STYLE DS_SHELLFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "wake-mart"
+CLASS "WakeMartMain"
+FONT 9, "Yu Gothic UI", 400, 0, 0x80
+BEGIN
+    CONTROL         "", IDC_LIST, "SysListView32", LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL | WS_BORDER | WS_TABSTOP, 7, 7, 406, 168
+    PUSHBUTTON      "追加(&A)", IDC_ADD, 7, 180, 50, 14
+    PUSHBUTTON      "編集(&E)", IDC_EDIT, 61, 180, 50, 14
+    PUSHBUTTON      "複製(&C)", IDC_COPY, 115, 180, 50, 14
+    PUSHBUTTON      "削除(&D)", IDC_DEL, 169, 180, 50, 14
+    PUSHBUTTON      "テスト(&T)", IDC_TEST, 223, 180, 50, 14
+    LTEXT           "", IDC_STATUS, 7, 199, 406, 18, SS_NOPREFIX
+    AUTOCHECKBOX    "Windows の起動時に常駐する(&W)", IDC_STARTUP, 7, 222, 200, 11
+    PUSHBUTTON      "閉じる", IDCANCEL, 363, 219, 50, 14
+END
+
+IDD_EDIT DIALOGEX 0, 0, 523, 221
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "アラームの設定"
+FONT 9, "Yu Gothic UI", 400, 0, 0x80
+BEGIN
+    LTEXT           "名前(&N):", -1, 10, 10, 32, 10
+    EDITTEXT        IDC_NAME, 44, 8, 150, 13, ES_AUTOHSCROLL
+    AUTOCHECKBOX    "有効", IDC_ENABLED, 202, 9, 44, 11
+
+    GROUPBOX        "日時", -1, 7, 26, 240, 98
+    LTEXT           "繰り返し(&R):", -1, 14, 40, 40, 10
+    COMBOBOX        IDC_KIND, 56, 38, 100, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "日付:", IDC_DATE_LABEL, 14, 58, 40, 10
+    CONTROL         "", IDC_DATE, "SysDateTimePick32", DTS_SHORTDATEFORMAT | WS_TABSTOP, 56, 56, 90, 13
+    LTEXT           "時刻(&I):", -1, 152, 58, 26, 10
+    CONTROL         "", IDC_TIME, "SysDateTimePick32", DTS_TIMEFORMAT | DTS_UPDOWN | WS_TABSTOP, 180, 56, 60, 13
+    LTEXT           "", IDC_ROW3_LABEL, 14, 77, 40, 10
+    AUTOCHECKBOX    "日", IDC_WD0 + 0, 56, 76, 24, 11
+    AUTOCHECKBOX    "月", IDC_WD0 + 1, 82, 76, 24, 11
+    AUTOCHECKBOX    "火", IDC_WD0 + 2, 108, 76, 24, 11
+    AUTOCHECKBOX    "水", IDC_WD0 + 3, 134, 76, 24, 11
+    AUTOCHECKBOX    "木", IDC_WD0 + 4, 160, 76, 24, 11
+    AUTOCHECKBOX    "金", IDC_WD0 + 5, 186, 76, 24, 11
+    AUTOCHECKBOX    "土", IDC_WD0 + 6, 212, 76, 24, 11
+    EDITTEXT        IDC_MDAY, 56, 75, 26, 13, ES_NUMBER
+    LTEXT           "日（その月にない日は月末）", IDC_MDAY_L2, 86, 77, 150, 10
+    EDITTEXT        IDC_INTERVAL, 56, 75, 36, 13, ES_NUMBER
+    LTEXT           "分ごと（日付・時刻から数える）", IDC_INTERVAL_L, 96, 77, 144, 10
+    LTEXT           "今から(&M)", -1, 14, 97, 34, 10
+    EDITTEXT        IDC_AFTER, 48, 95, 28, 13, ES_NUMBER
+    LTEXT           "分後に", -1, 80, 97, 24, 10
+    PUSHBUTTON      "設定", IDC_AFTER_SET, 106, 94, 34, 14
+    LTEXT           "", IDC_PREVIEW, 14, 111, 226, 10, SS_NOPREFIX
+
+    GROUPBOX        "オプション", -1, 7, 128, 240, 66
+    AUTOCHECKBOX    "スリープ・休止状態から復帰させる(&W)", IDC_WAKE, 14, 140, 226, 11
+    AUTOCHECKBOX    "画面を点ける(&L)", IDC_DISPLAY, 14, 153, 226, 11
+    AUTOCHECKBOX    "時刻を過ぎていたら、気づいた時点で実行する(&Q)", IDC_CATCHUP, 14, 166, 226, 11
+    LTEXT           "スヌーズ(&Z):", -1, 14, 180, 40, 10
+    EDITTEXT        IDC_SNOOZE, 56, 178, 24, 13, ES_NUMBER
+    LTEXT           "分（0 でボタンを出さない）", -1, 84, 180, 150, 10
+
+    GROUPBOX        "動作", -1, 254, 6, 262, 188
+    AUTOCHECKBOX    "メッセージを表示する(&G)", IDC_ACT_MSG, 261, 18, 200, 11
+    EDITTEXT        IDC_MSG, 273, 31, 236, 30, ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL
+    AUTOCHECKBOX    "音を鳴らす(&O)（止めるまで繰り返す）", IDC_ACT_SOUND, 261, 66, 236, 11
+    EDITTEXT        IDC_SOUND, 273, 79, 166, 13, ES_AUTOHSCROLL
+    PUSHBUTTON      "参照...", IDC_SOUND_BROWSE, 443, 78, 34, 14
+    PUSHBUTTON      "試聴", IDC_SOUND_TEST, 481, 78, 28, 14
+    AUTOCHECKBOX    "プログラムを実行する(&P)", IDC_ACT_CMD, 261, 98, 200, 11
+    LTEXT           "ファイル:", -1, 273, 113, 42, 10
+    EDITTEXT        IDC_CMD, 317, 111, 156, 13, ES_AUTOHSCROLL
+    PUSHBUTTON      "参照...", IDC_CMD_BROWSE, 477, 110, 32, 14
+    LTEXT           "引数:", -1, 273, 129, 42, 10
+    EDITTEXT        IDC_ARGS, 317, 127, 192, 13, ES_AUTOHSCROLL
+    LTEXT           "作業フォルダ:", -1, 273, 145, 44, 10
+    EDITTEXT        IDC_DIR, 317, 143, 108, 13, ES_AUTOHSCROLL
+    LTEXT           "表示:", -1, 431, 145, 20, 10
+    COMBOBOX        IDC_SHOW, 453, 143, 56, 80, CBS_DROPDOWNLIST | WS_TABSTOP
+    AUTOCHECKBOX    "終わるまでスリープさせない（電源操作は終了後に行う）", IDC_CMD_WAIT, 273, 160, 236, 11
+    LTEXT           "最後に(&F):", -1, 261, 178, 40, 10
+    COMBOBOX        IDC_POWER, 303, 176, 80, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "（30 秒前に確認が出ます）", IDC_POWER_NOTE, 389, 178, 120, 10
+
+    PUSHBUTTON      "テスト(&T)", IDC_TEST, 7, 200, 50, 14
+    DEFPUSHBUTTON   "OK", IDOK, 413, 200, 50, 14
+    PUSHBUTTON      "キャンセル", IDCANCEL, 466, 200, 50, 14
+END
+
+IDD_POPUP DIALOGEX 0, 0, 260, 110
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOPMOST | WS_EX_APPWINDOW
+CAPTION "wake-mart アラーム"
+FONT 9, "Yu Gothic UI", 400, 0, 0x80
+BEGIN
+    ICON            IDI_APP, -1, 10, 10, 20, 20
+    LTEXT           "", IDC_P_TITLE, 40, 9, 212, 14, SS_NOPREFIX
+    LTEXT           "", IDC_P_TIME, 40, 26, 212, 10, SS_NOPREFIX
+    EDITTEXT        IDC_P_MSG, 10, 42, 240, 40, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
+    PUSHBUTTON      "スヌーズ", IDC_P_SNOOZE, 110, 88, 72, 15
+    DEFPUSHBUTTON   "停止(&X)", IDOK, 186, 88, 64, 15
+END
+
+IDD_COUNTDOWN DIALOGEX 0, 0, 240, 70
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOPMOST | WS_EX_APPWINDOW
+CAPTION "wake-mart"
+FONT 9, "Yu Gothic UI", 400, 0, 0x80
+BEGIN
+    LTEXT           "", IDC_CD_TEXT, 10, 10, 220, 30, SS_NOPREFIX
+    PUSHBUTTON      "今すぐ実行", IDC_CD_NOW, 116, 48, 56, 15
+    DEFPUSHBUTTON   "キャンセル(&C)", IDCANCEL, 176, 48, 56, 15
+END
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041104b0"
+        BEGIN
+            VALUE "CompanyName", "nekoryu"
+            VALUE "FileDescription", "wake-mart"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "ProductName", "wake-mart"
+            VALUE "ProductVersion", "1.0.0"
+            VALUE "Comments", "指定した日時にスリープ・休止状態から起こして、メッセージ・音・プログラム実行・電源操作を行うアラーム"
+            VALUE "OriginalFilename", "wake-mart.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0411, 1200
+    END
+END
