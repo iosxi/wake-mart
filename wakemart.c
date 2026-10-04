@@ -21,7 +21,6 @@
 #include <commdlg.h>
 #include <mmsystem.h>
 #include <powrprof.h>
-#include <winevt.h>
 #include <wchar.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,23 +36,12 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "wevtapi.lib")
 
 #define APP_NAME        L"wake-mart"
 #define MAIN_CLASS      L"WakeMartMain"
 #define PROP_KEY        L"WakeMartKey"
 #define WM_TRAY         (WM_APP + 1)
 #define WM_APP_CMD      (WM_APP + 2)      // 別インスタンスからの指示（wParam: CMD_*）
-#define WM_APP_SLEEPTEST (WM_APP + 11)    // スリープ復帰テスト（wParam: ST_*）
-#define ST_GO           0                 // 寝かせる
-#define ST_RESUMED      1                 // 復帰の通知が来た
-#define ST_RETURNED     2                 // SetSuspendState から戻った
-// 開発機では、数十秒先のタイマーを抱えて寝かせると、タイマーと無関係に十数秒で起きて
-// しまう（Windows の記録は「原因不明」）。91 秒先なら「タイマー」と記録された
-#define SLEEPTEST_S3    60                // スリープは 60 秒後に起こす
-#define SLEEPTEST_S4    120               // 休止状態は書き出しに時間がかかるので 120 秒後
-#define TIMER_ST_EVENT  2                 // 復帰の記録（イベントログ）を待つタイマー
-#define ST_EVENT_TRIES  15                // 1 秒おきに最大 15 回探す
 #define CMD_SHOW        1
 #define CMD_EXIT        2
 #define TIMER_TICK      1
@@ -135,15 +123,6 @@ static HWND      g_countdown;
 static int       g_cdOp, g_cdLeft;
 static wchar_t   g_cdName[128];
 static BOOL      g_hideNoticeShown, g_listUpdating;
-
-// スリープ復帰テスト。起こすのは通常のウェイクタイマーとは別のタイマーで行う
-static struct {
-    BOOL active, hibernate, resumed, returned;
-    ULONGLONG startAt, wakeAt, resumeAt;
-    int alarmId, tries;
-} g_st;
-static HANDLE    g_testTimer;
-static int       g_resultShowing;         // テスト結果を表示中（寝かせない・画面を点けておく）
 
 // ---- 時刻 ----
 
@@ -521,14 +500,14 @@ static int popups_wanting_display(void);
 
 static void update_exec_state(void) {
     ULONGLONG now = now_utc();
-    BOOL sys = g_popupCount > 0 || g_countdown != NULL || g_jobCount > 0 || g_resultShowing > 0
+    BOOL sys = g_popupCount > 0 || g_countdown != NULL || g_jobCount > 0
             || GetTickCount64() - g_lastFireTick < AWAKE_AFTER_SEC * 1000ULL;
     // 起こした直後から予定までの間（と予定直前）は寝かせない
     if (g_wakeDue && g_wakeDue > now && g_wakeDue - now <= (WAKE_LEAD_SEC + 60) * TPS) sys = TRUE;
 
     EXECUTION_STATE f = ES_CONTINUOUS;
     if (sys) f |= ES_SYSTEM_REQUIRED;
-    if (popups_wanting_display() > 0 || g_resultShowing > 0) f |= ES_DISPLAY_REQUIRED;
+    if (popups_wanting_display() > 0) f |= ES_DISPLAY_REQUIRED;
     if (f != g_esApplied) {
         SetThreadExecutionState(f);
         g_esApplied = f;
@@ -1410,197 +1389,6 @@ static void cmd_delete(void) {
     arm_wake(FALSE);
 }
 
-// ---- スリープ復帰テスト ----
-//
-// wake-mart 自身が寝かせ、SLEEPTEST_S3/S4 秒後にタイマーで起こす。「タイマーで起きたか」は
-// 復帰時刻では決めず、Windows が System ログに残す復帰の記録（Power-Troubleshooter
-// ID 1 の WakeSourceType / WakeTimerOwner）で判定する。開発機は、タイマーと無関係に
-// 予定に近い時刻に起きることがあり、時刻だけでは「成功」と誤判定したため。
-// 一覧で選んでいるアラームがあれば、復帰後にその動作をテスト実行する（電源操作は除く）。
-
-// <Data Name='name'>値</Data> の値を取り出す
-static void xml_data(const wchar_t *xml, const wchar_t *name, wchar_t *out, size_t n) {
-    wchar_t key[64];
-    out[0] = 0;
-    swprintf(key, 64, L"Name='%ls'>", name);
-    const wchar_t *p = wcsstr(xml, key);
-    if (!p) return;
-    p += wcslen(key);
-    size_t o = 0;
-    while (*p && *p != L'<' && o + 1 < n) {
-        if (!wcsncmp(p, L"&amp;", 5)) { out[o++] = L'&'; p += 5; }
-        else out[o++] = *p++;
-    }
-    out[o] = 0;
-}
-
-// since（UTC）以降で最新の「スリープから復帰した」記録を読む。無ければ FALSE
-static BOOL read_wake_event(ULONGLONG since, int *type, wchar_t *source, size_t sn, wchar_t *owner, size_t on) {
-    SYSTEMTIME u; u64_to_st(since, &u);
-    wchar_t q[300];
-    swprintf(q, 300, L"*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and (EventID=1)"
-                     L" and TimeCreated[@SystemTime>='%04d-%02d-%02dT%02d:%02d:%02d.000Z']]]",
-             u.wYear, u.wMonth, u.wDay, u.wHour, u.wMinute, u.wSecond);
-    EVT_HANDLE h = EvtQuery(NULL, L"System", q, EvtQueryChannelPath | EvtQueryReverseDirection);
-    if (!h) return FALSE;
-    EVT_HANDLE ev = NULL;
-    DWORD got = 0;
-    BOOL ok = FALSE;
-    if (EvtNext(h, 1, &ev, 0, 0, &got) && got == 1) {
-        DWORD used = 0, props = 0;
-        EvtRender(NULL, ev, EvtRenderEventXml, 0, NULL, &used, &props);
-        wchar_t *xml = (wchar_t *)malloc(used + 2);
-        if (xml && EvtRender(NULL, ev, EvtRenderEventXml, used, xml, &used, &props)) {
-            wchar_t t[16];
-            xml_data(xml, L"WakeSourceType", t, 16);
-            *type = _wtoi(t);
-            xml_data(xml, L"WakeSourceText", source, sn);
-            xml_data(xml, L"WakeTimerOwner", owner, on);
-            ok = TRUE;
-        }
-        free(xml);
-        EvtClose(ev);
-    }
-    EvtClose(h);
-    return ok;
-}
-
-static void sleeptest_menu(HWND d) {
-    HMENU mn = CreatePopupMenu();
-    wchar_t s[96];
-    swprintf(s, 96, L"スリープして %d 秒後に起こす(&S)", SLEEPTEST_S3);
-    AppendMenuW(mn, MF_STRING, IDM_TEST_SLEEP, s);
-    swprintf(s, 96, L"休止状態にして %d 秒後に起こす(&H)", SLEEPTEST_S4);
-    AppendMenuW(mn, MF_STRING, IDM_TEST_HIBERNATE, s);
-    RECT r;
-    GetWindowRect(GetDlgItem(d, IDC_SLEEPTEST), &r);
-    TrackPopupMenu(mn, TPM_LEFTALIGN | TPM_TOPALIGN, r.left, r.bottom, 0, d, NULL);
-    DestroyMenu(mn);
-}
-
-static void sleeptest_start(HWND d, BOOL hibernate) {
-    if (g_st.active) return;
-    ZeroMemory(&g_st, sizeof g_st);
-    g_st.hibernate = hibernate;
-    g_st.alarmId = selected_id();
-    g_st.startAt = now_utc();
-    g_st.wakeAt = g_st.startAt + (ULONGLONG)(hibernate ? SLEEPTEST_S4 : SLEEPTEST_S3) * TPS;
-    LARGE_INTEGER li; li.QuadPart = (LONGLONG)g_st.wakeAt;
-    SetLastError(0);
-    if (!SetWaitableTimer(g_testTimer, &li, 0, NULL, NULL, TRUE) || GetLastError() == ERROR_NOT_SUPPORTED) {
-        wchar_t s[160];
-        swprintf(s, 160, L"スリープ解除タイマーを設定できませんでした（エラー %lu）。", GetLastError());
-        MessageBoxW(d, s, APP_NAME, MB_ICONWARNING);
-        return;
-    }
-    g_st.active = TRUE;
-    wchar_t w[64]; fmt_local(g_st.wakeAt, w, 64);
-    logw(L"スリープ復帰テスト開始: %ls、%ls に起こす", hibernate ? L"休止状態" : L"スリープ", w);
-    PostMessageW(d, WM_APP_SLEEPTEST, ST_GO, 0);   // メニューが閉じてから寝かせる
-}
-
-// 判定して結果を見せる。found=FALSE は復帰の記録が見つからなかったとき
-static void sleeptest_verdict(HWND d, BOOL found, int type, const wchar_t *source, const wchar_t *owner) {
-    g_st.active = FALSE;
-    CancelWaitableTimer(g_testTimer);
-    LONGLONG delta = ((LONGLONG)g_st.resumeAt - (LONGLONG)g_st.wakeAt) / (LONGLONG)TPS;
-    wchar_t plan[16], got[16], s[900], head[400];
-    SYSTEMTIME t;
-    utc_to_local(g_st.wakeAt, &t);   swprintf(plan, 16, L"%02d:%02d:%02d", t.wHour, t.wMinute, t.wSecond);
-    utc_to_local(g_st.resumeAt, &t); swprintf(got, 16, L"%02d:%02d:%02d", t.wHour, t.wMinute, t.wSecond);
-    BOOL batt;
-    int v = read_rtcwake(&batt);
-    // タイマーで起きたときの WakeSourceType は 8 のことも 6 のこともあった（開発機）。
-    // どちらでも WakeTimerOwner にタイマーを持つ exe が入るので、種別ではなくそちらで見る
-    BOOL timer = found && owner[0];
-    BOOL ours = timer && wcsstr(owner, L"wake-mart") != NULL;
-    UINT icon = ours ? MB_ICONINFORMATION : MB_ICONWARNING;
-
-    if (ours)
-        wcscpy(head, L"成功: スリープ解除タイマーで復帰しました。\n（Windows の記録でも、wake-mart のタイマーで起きたことになっています）");
-    else if (timer)
-        swprintf(head, 400, L"別のアプリのタイマーで復帰しました（%ls）。wake-mart のタイマーではありません。", owner);
-    else if (found && type == 5)
-        swprintf(head, 400, L"「%ls」によって復帰しました（キーボード・マウス・LAN などの機器）。\nwake-mart のタイマーで起きたのではありません。",
-                 source[0] ? source : L"機器");
-    else if (delta > (g_st.hibernate ? 120 : 30))
-        swprintf(head, 400, L"失敗: 予定の時刻には起きず、%lld 分 %lld 秒後に（キー操作などで）復帰しました。\nスリープ解除タイマーが効いていません。",
-                 delta / 60, delta % 60);
-    else if (delta >= -3)
-        // Windows 10 の利用者の環境では、予定どおりに起きてもこの記録になった
-        wcscpy(head, L"予定どおりの時刻に復帰しました。\n"
-                     L"ただし Windows は復帰の原因を「不明」と記録しているため、タイマーで起きたとは断定できません。");
-    else
-        wcscpy(head, L"判定できません: 予定より早く復帰し、Windows は原因を「不明」と記録しています。\n"
-                     L"タイマー以外の理由で起きたようです。もう一度試してください。");
-    swprintf(s, 900, L"%ls\n\n予定 %ls → 復帰 %ls（%+lld 秒）", head, plan, got, delta);
-    if (!ours && (v == 0 || v == 2))
-        wcsncat(s, L"\n\n今の電源では「スリープ解除タイマーの許可」が有効になっていません。メイン画面の「有効にする」で変更できます。",
-                899 - wcslen(s));
-    logw(L"スリープ復帰テスト結果: 予定 %ls 復帰 %ls 差 %+lld 秒 / 記録=%ls 種別=%d 原因=%ls 所有者=%ls / タイマー許可=%d",
-         plan, got, delta, found ? L"あり" : L"なし", type, source, owner, v);
-
-    wake_display();                   // タイマーで起きた直後は画面が消えたままなので点ける
-    Alarm *a = find_alarm(g_st.alarmId);
-    if (a) { Alarm copy = *a; fire(&copy, now_utc(), FALSE, FALSE, TRUE); }
-    MessageBoxW(d, s, L"wake-mart スリープ復帰テスト", icon | MB_TOPMOST | MB_SETFOREGROUND);
-    g_resultShowing--;
-    update_exec_state();
-}
-
-// 復帰の記録がログに書かれるのは復帰の少しあとなので、1 秒おきに探す
-static void sleeptest_poll(HWND d) {
-    int type = 0;
-    wchar_t source[256] = L"", owner[MAX_PATH] = L"";
-    BOOL found = read_wake_event(g_st.startAt, &type, source, ARRAYSIZE(source), owner, ARRAYSIZE(owner));
-    if (!found && ++g_st.tries < ST_EVENT_TRIES) return;
-    KillTimer(d, TIMER_ST_EVENT);
-    sleeptest_verdict(d, found, type, source, owner);
-}
-
-static void sleeptest_finish(HWND d) {
-    if (!g_st.active) return;
-    g_resultShowing++;                // 判定が出るまで寝かせない
-    update_exec_state();
-    g_st.tries = 0;
-    SetTimer(d, TIMER_ST_EVENT, 1000, NULL);
-}
-
-static void sleeptest_message(HWND d, WPARAM step) {
-    switch (step) {
-    case ST_GO:
-        if (!g_st.active) return;
-        if (!SetSuspendState(g_st.hibernate ? TRUE : FALSE, FALSE, FALSE)) {
-            DWORD e = GetLastError();
-            g_st.active = FALSE;
-            CancelWaitableTimer(g_testTimer);
-            logw(L"スリープ復帰テスト: 寝かせられませんでした（err=%lu）", e);
-            wchar_t s[160];
-            swprintf(s, 160, L"%lsに入れませんでした（エラー %lu）。", g_st.hibernate ? L"休止状態" : L"スリープ", e);
-            MessageBoxW(d, s, APP_NAME, MB_ICONWARNING);
-            return;
-        }
-        // この PC では SetSuspendState は復帰するまで戻らない。すぐ戻る環境もありうるので、
-        // 判定は Windows からの復帰の通知（ST_RESUMED）と、ここから戻ったことの両方が揃ってから
-        PostMessageW(d, WM_APP_SLEEPTEST, ST_RETURNED, 0);
-        return;
-    case ST_RESUMED:                  // 復帰時刻は通知を受けた時点（WM_POWERBROADCAST で記録済み）
-    case ST_RETURNED:
-        if (!g_st.active) return;
-        if (step == ST_RETURNED) g_st.returned = TRUE;
-        if (g_st.resumed && g_st.returned) sleeptest_finish(d);
-        return;
-    }
-}
-
-// 復帰の通知を受けたとき
-static void sleeptest_on_resume(HWND d) {
-    if (!g_st.active || g_st.resumed) return;
-    g_st.resumed = TRUE;
-    g_st.resumeAt = now_utc();
-    PostMessageW(d, WM_APP_SLEEPTEST, ST_RESUMED, 0);
-}
-
 static void show_main(void) {
     ShowWindow(g_main, IsIconic(g_main) ? SW_RESTORE : SW_SHOW);
     SetForegroundWindow(g_main);
@@ -1654,7 +1442,7 @@ static void tray_menu(void) {
 typedef struct { int id, flags; RECT rc; } Anchor;
 static Anchor g_anchors[] = {
     { IDC_LIST, AN_WIDTH | AN_HEIGHT }, { IDC_ADD, AN_BOTTOM }, { IDC_EDIT, AN_BOTTOM },
-    { IDC_COPY, AN_BOTTOM }, { IDC_DEL, AN_BOTTOM }, { IDC_SLEEPTEST, AN_BOTTOM },
+    { IDC_COPY, AN_BOTTOM }, { IDC_DEL, AN_BOTTOM },
     { IDC_STATUS, AN_BOTTOM | AN_WIDTH }, { IDC_FIX_RTC, AN_BOTTOM | AN_RIGHT },
     { IDC_SLEEP_CLOSE, AN_BOTTOM | AN_RIGHT }, { IDCANCEL, AN_BOTTOM | AN_RIGHT },
 };
@@ -1728,7 +1516,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_TIMER:
         if (wp == TIMER_TICK) tick();
-        else if (wp == TIMER_ST_EVENT) sleeptest_poll(d);
         return TRUE;
     case WM_SIZE:
         if (wp != SIZE_MINIMIZED) anchors_apply(d, LOWORD(lp), HIWORD(lp));
@@ -1744,12 +1531,10 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
             break;
         case PBT_APMRESUMEAUTOMATIC:
             logw(L"復帰しました（自動）");
-            sleeptest_on_resume(d);
             tick();
             break;
         case PBT_APMRESUMESUSPEND:
             logw(L"復帰しました（利用者の操作）");
-            sleeptest_on_resume(d);
             break;
         case PBT_POWERSETTINGCHANGE: {
             const POWERBROADCAST_SETTING *ps = (const POWERBROADCAST_SETTING *)lp;
@@ -1817,9 +1602,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         list_refresh(-1);
         arm_wake(FALSE);
         return TRUE;
-    case WM_APP_SLEEPTEST:
-        sleeptest_message(d, wp);
-        return TRUE;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_ADD:  cmd_add(); return TRUE;
@@ -1827,9 +1609,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         case IDC_EDIT: cmd_edit(); return TRUE;
         case IDC_COPY: cmd_copy(); return TRUE;
         case IDC_DEL:  cmd_delete(); return TRUE;
-        case IDC_SLEEPTEST: sleeptest_menu(d); return TRUE;
-        case IDM_TEST_SLEEP: sleeptest_start(d, FALSE); return TRUE;
-        case IDM_TEST_HIBERNATE: sleeptest_start(d, TRUE); return TRUE;
         case IDM_SLEEP_NOW: do_power(PW_SLEEP); return TRUE;
         case IDM_HIBERNATE_NOW: do_power(PW_HIBERNATE); return TRUE;
         case IDC_FIX_RTC: {
@@ -1974,7 +1753,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show) {
     RegisterClassExW(&wc);
 
     g_wakeTimer = CreateWaitableTimerW(NULL, TRUE, NULL);
-    g_testTimer = CreateWaitableTimerW(NULL, TRUE, NULL);
     logw(L"起動（%ls）", g_iniPath);
     load_alarms();
     for (int i = 0; i < g_count; i++) recompute_next(&g_alarms[i]);

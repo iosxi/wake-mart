@@ -22,7 +22,6 @@ BEGIN
     PUSHBUTTON      "編集(&E)", IDC_EDIT, 61, 180, 50, 14
     PUSHBUTTON      "複製(&C)", IDC_COPY, 115, 180, 50, 14
     PUSHBUTTON      "削除(&D)", IDC_DEL, 169, 180, 50, 14
-    PUSHBUTTON      "スリープして試す(&S)...", IDC_SLEEPTEST, 223, 180, 86, 14
     LTEXT           "", IDC_STATUS, 7, 199, 342, 18, SS_NOPREFIX
     PUSHBUTTON      "有効にする(&F)", IDC_FIX_RTC, 353, 201, 60, 14, NOT WS_VISIBLE
     PUSHBUTTON      "スリープで閉じる(&Z)", IDC_SLEEP_CLOSE, 279, 219, 80, 14
@@ -124,8 +123,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,2,0,0
- PRODUCTVERSION 1,2,0,0
+ FILEVERSION 1,3,0,0
+ PRODUCTVERSION 1,3,0,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -135,9 +134,9 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "nekoryu"
             VALUE "FileDescription", "wake-mart"
-            VALUE "FileVersion", "1.2.0"
+            VALUE "FileVersion", "1.3.0"
             VALUE "ProductName", "wake-mart"
-            VALUE "ProductVersion", "1.2.0"
+            VALUE "ProductVersion", "1.3.0"
             VALUE "Comments", "指定した日時にスリープ・休止状態から起こして、メッセージ・音・プログラム実行・電源操作を行うアラーム"
             VALUE "OriginalFilename", "wake-mart.exe"
         END
