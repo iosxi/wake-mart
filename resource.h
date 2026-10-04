@@ -10,6 +10,8 @@
 #define IDC_TEST            106
 #define IDC_STATUS          107
 #define IDC_STARTUP         108
+#define IDC_SLEEPTEST       109
+#define IDC_FIX_RTC         110
 
 // アラームの設定
 #define IDD_EDIT            200
@@ -64,3 +66,7 @@
 #define IDM_OPEN            500
 #define IDM_STATUS          501
 #define IDM_EXIT            502
+#define IDM_TEST_SLEEP      503
+#define IDM_TEST_HIBERNATE  504
+#define IDM_SLEEP_NOW       505
+#define IDM_HIBERNATE_NOW   506

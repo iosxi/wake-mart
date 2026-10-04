@@ -1,4 +1,4 @@
-#pragma code_page(65001)
+﻿#pragma code_page(65001)
 #include <windows.h>
 #include <commctrl.h>
 #include "resource.h"
@@ -23,7 +23,9 @@ BEGIN
     PUSHBUTTON      "複製(&C)", IDC_COPY, 115, 180, 50, 14
     PUSHBUTTON      "削除(&D)", IDC_DEL, 169, 180, 50, 14
     PUSHBUTTON      "テスト(&T)", IDC_TEST, 223, 180, 50, 14
-    LTEXT           "", IDC_STATUS, 7, 199, 406, 18, SS_NOPREFIX
+    PUSHBUTTON      "スリープして試す(&S)...", IDC_SLEEPTEST, 277, 180, 86, 14
+    LTEXT           "", IDC_STATUS, 7, 199, 342, 18, SS_NOPREFIX
+    PUSHBUTTON      "有効にする(&F)", IDC_FIX_RTC, 353, 201, 60, 14, NOT WS_VISIBLE
     AUTOCHECKBOX    "Windows の起動時に常駐する(&W)", IDC_STARTUP, 7, 222, 200, 11
     PUSHBUTTON      "閉じる", IDCANCEL, 363, 219, 50, 14
 END
@@ -123,8 +125,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,0,0,0
- PRODUCTVERSION 1,0,0,0
+ FILEVERSION 1,1,0,0
+ PRODUCTVERSION 1,1,0,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -134,9 +136,9 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "nekoryu"
             VALUE "FileDescription", "wake-mart"
-            VALUE "FileVersion", "1.0.0"
+            VALUE "FileVersion", "1.1.0"
             VALUE "ProductName", "wake-mart"
-            VALUE "ProductVersion", "1.0.0"
+            VALUE "ProductVersion", "1.1.0"
             VALUE "Comments", "指定した日時にスリープ・休止状態から起こして、メッセージ・音・プログラム実行・電源操作を行うアラーム"
             VALUE "OriginalFilename", "wake-mart.exe"
         END
