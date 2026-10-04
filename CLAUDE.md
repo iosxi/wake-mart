@@ -13,8 +13,8 @@
 - exe（`wake-mart.exe`）はリポジトリに追跡させている。ソースを直したら
   `build.cmd` で作り直してからコミットする。
 - リリースの添付物にするときは `wake-mart.exe` を**改名せずにそのまま**渡す
-  （`sleep-guard` と同じ理由。スタートアップのショートカットが exe のパスを指している）。
-- `FileVersion` は `wakemart.rc` の VERSIONINFO（v2 時点で `1.1.0`）と manifest の version。
+  （`sleep-guard` と同じ理由。利用者が作ったショートカットが exe のパスを指している）。
+- `FileVersion` は `wakemart.rc` の VERSIONINFO（v3 時点で `1.2.0`）と manifest の version。
   タグの `vN` とは連動させていない。機能が変わったら上げる。
 
 ## 動作確認について
@@ -43,8 +43,11 @@
   Kernel-Power（ID 42）の `TargetState`（4=S3、5=S4）で分かる。
 - `SetSuspendState` は復帰するまで UI スレッドを止めるので、`PBT_APMSUSPEND` のログは
   復帰後の時刻で残る。
-- **タイマーで起きたかは、時刻ではなく Power-Troubleshooter（ID 1）の `WakeSourceType` で判定する。**
-  8＝タイマー（`WakeTimerOwner` に exe のパス）、5＝機器（`WakeSourceText` に機器名）、0＝不明。
+- **タイマーで起きたかは、時刻ではなく Power-Troubleshooter（ID 1）の記録で判定する。**
+  タイマーなら `WakeTimerOwner` に exe のパスが入る。`WakeSourceType` はタイマーでも 8 の回と
+  6 の回があった（v3 で、種別でなく `WakeTimerOwner` で判定するよう直した）。
+  5＝機器（`WakeSourceText` に機器名）、0＝不明。
+  Windows 10 の利用者の環境では、予定どおり +8 秒で起きても 0（不明）と記録された。
   2026-10-04 の試験では、タイマー時刻とほぼ一致した復帰でも 0（不明）が何度もあり、
   時刻だけで「成功」とすると誤る（「スリープして試す」は v2 でこの方式に直した）。
 - **この PC は、数十秒先のタイマーを抱えて寝かせると、十数秒で原因不明（種別 0）で起きる。**

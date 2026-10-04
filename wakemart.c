@@ -2,23 +2,21 @@
 //
 // スリープ（S3）や休止状態（S4）に入っていても、SetWaitableTimer のスリープ解除
 // タイマー（fResume=TRUE）でマシンを起こしてから実行する。タスクスケジューラも
-// レジストリも使わない（設定は exe の隣の wake-mart.ini、自動起動はスタートアップ
-// フォルダのショートカット）。
+// レジストリも使わない（設定は exe の隣の wake-mart.ini）。自動起動の仕組みは持たない
+// （v3 で利用者の要望により外した）。
 //
 // 鳴らす判定は 0.5 秒ごとのタイマーで行い、ウェイクタイマーは「起こす」ためだけに
 // 使う。起こすのは予定の WAKE_LEAD_SEC 秒前（休止状態からの復帰にかかる時間の分）。
 //
 // コマンドライン:
 //   wake-mart.exe                起動（既に動いていればその画面を出す）
-//   wake-mart.exe -tray          画面を出さずにタスクトレイで起動（スタートアップ用）
+//   wake-mart.exe -tray          画面を出さずにタスクトレイで起動
 //   wake-mart.exe -exit          動いている wake-mart を終了させる
 //   wake-mart.exe -config <ini>  設定ファイルを指定（既定は exe の隣の wake-mart.ini）
 #define _CRT_SECURE_NO_WARNINGS
-#define COBJMACROS
 #define _WIN32_WINNT 0x0601        // Windows 10 より新しい API を使わないための目安
 #include <windows.h>
 #include <shellapi.h>
-#include <shlobj.h>
 #include <commctrl.h>
 #include <commdlg.h>
 #include <mmsystem.h>
@@ -33,7 +31,6 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "comdlg32.lib")
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "powrprof.lib")
@@ -87,7 +84,6 @@ static const GUID GUID_SLEEP_SUB  = { 0x238c9fa8, 0x0aad, 0x41ed, { 0x83, 0xf4, 
 static const GUID GUID_RTCWAKE    = { 0xbd3b718a, 0x0680, 0x4d9d, { 0x8a, 0xb2, 0xe1, 0xd2, 0xb4, 0xac, 0x80, 0x6d } };
 static const GUID GUID_ACDC       = { 0x5d3e9a59, 0xe9d5, 0x4b00, { 0xa6, 0xbd, 0xff, 0x34, 0xff, 0x51, 0x65, 0x48 } };
 static const GUID GUID_DISPLAY    = { 0x6fe69556, 0x704a, 0x47a0, { 0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47 } };
-static const GUID FOLDER_STARTUP  = { 0xb97d20bb, 0xf46a, 0x4c97, { 0xba, 0x10, 0x5e, 0x36, 0x08, 0x43, 0x08, 0x54 } };
 
 typedef struct {
     int id;
@@ -1094,50 +1090,7 @@ static void list_refresh(int selectId) {
     EnableWindow(GetDlgItem(g_main, IDC_EDIT), sel);
     EnableWindow(GetDlgItem(g_main, IDC_COPY), sel);
     EnableWindow(GetDlgItem(g_main, IDC_DEL), sel);
-    EnableWindow(GetDlgItem(g_main, IDC_TEST), sel);
     tray_update_tip();
-}
-
-// ---- スタートアップ（ショートカット。レジストリの Run は使わない） ----
-
-static BOOL startup_link_path(wchar_t *out, size_t n) {
-    PWSTR p = NULL;
-    if (FAILED(SHGetKnownFolderPath(&FOLDER_STARTUP, 0, NULL, &p))) return FALSE;
-    swprintf(out, n, L"%ls\\wake-mart.lnk", p);
-    CoTaskMemFree(p);
-    return TRUE;
-}
-
-static BOOL startup_exists(void) {
-    wchar_t lnk[MAX_PATH];
-    return startup_link_path(lnk, MAX_PATH) && GetFileAttributesW(lnk) != INVALID_FILE_ATTRIBUTES;
-}
-
-static BOOL startup_set(BOOL on) {
-    wchar_t lnk[MAX_PATH];
-    if (!startup_link_path(lnk, MAX_PATH)) return FALSE;
-    if (!on) return DeleteFileW(lnk) || GetLastError() == ERROR_FILE_NOT_FOUND;
-
-    IShellLinkW *sl = NULL;
-    IPersistFile *pf = NULL;
-    BOOL ok = FALSE;
-    if (FAILED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&sl))) return FALSE;
-    wchar_t args[MAX_PATH + 32], dir[MAX_PATH];
-    if (g_customIni) swprintf(args, ARRAYSIZE(args), L"-tray -config \"%ls\"", g_iniPath);
-    else             wcscpy(args, L"-tray");
-    wcscpy(dir, g_exePath);
-    wchar_t *sep = wcsrchr(dir, L'\\');
-    if (sep) *sep = 0;
-    IShellLinkW_SetPath(sl, g_exePath);
-    IShellLinkW_SetArguments(sl, args);
-    IShellLinkW_SetWorkingDirectory(sl, dir);
-    IShellLinkW_SetDescription(sl, L"wake-mart（アラーム）");
-    if (SUCCEEDED(IShellLinkW_QueryInterface(sl, &IID_IPersistFile, (void **)&pf))) {
-        ok = SUCCEEDED(IPersistFile_Save(pf, lnk, TRUE));
-        IPersistFile_Release(pf);
-    }
-    IShellLinkW_Release(sl);
-    return ok;
 }
 
 // ---- アラームの設定画面 ----
@@ -1457,13 +1410,6 @@ static void cmd_delete(void) {
     arm_wake(FALSE);
 }
 
-static void cmd_test(void) {
-    Alarm *p = find_alarm(selected_id());
-    if (!p) return;
-    Alarm a = *p;
-    fire(&a, now_utc(), FALSE, FALSE, TRUE);
-}
-
 // ---- スリープ復帰テスト ----
 //
 // wake-mart 自身が寝かせ、SLEEPTEST_S3/S4 秒後にタイマーで起こす。「タイマーで起きたか」は
@@ -1564,12 +1510,15 @@ static void sleeptest_verdict(HWND d, BOOL found, int type, const wchar_t *sourc
     utc_to_local(g_st.resumeAt, &t); swprintf(got, 16, L"%02d:%02d:%02d", t.wHour, t.wMinute, t.wSecond);
     BOOL batt;
     int v = read_rtcwake(&batt);
-    BOOL ours = found && type == 8 && owner && wcsstr(owner, L"wake-mart") != NULL;
+    // タイマーで起きたときの WakeSourceType は 8 のことも 6 のこともあった（開発機）。
+    // どちらでも WakeTimerOwner にタイマーを持つ exe が入るので、種別ではなくそちらで見る
+    BOOL timer = found && owner[0];
+    BOOL ours = timer && wcsstr(owner, L"wake-mart") != NULL;
     UINT icon = ours ? MB_ICONINFORMATION : MB_ICONWARNING;
 
     if (ours)
         wcscpy(head, L"成功: スリープ解除タイマーで復帰しました。\n（Windows の記録でも、wake-mart のタイマーで起きたことになっています）");
-    else if (found && type == 8)
+    else if (timer)
         swprintf(head, 400, L"別のアプリのタイマーで復帰しました（%ls）。wake-mart のタイマーではありません。", owner);
     else if (found && type == 5)
         swprintf(head, 400, L"「%ls」によって復帰しました（キーボード・マウス・LAN などの機器）。\nwake-mart のタイマーで起きたのではありません。",
@@ -1577,9 +1526,13 @@ static void sleeptest_verdict(HWND d, BOOL found, int type, const wchar_t *sourc
     else if (delta > (g_st.hibernate ? 120 : 30))
         swprintf(head, 400, L"失敗: 予定の時刻には起きず、%lld 分 %lld 秒後に（キー操作などで）復帰しました。\nスリープ解除タイマーが効いていません。",
                  delta / 60, delta % 60);
+    else if (delta >= -3)
+        // Windows 10 の利用者の環境では、予定どおりに起きてもこの記録になった
+        wcscpy(head, L"予定どおりの時刻に復帰しました。\n"
+                     L"ただし Windows は復帰の原因を「不明」と記録しているため、タイマーで起きたとは断定できません。");
     else
-        wcscpy(head, L"判定できません: Windows は復帰の原因を記録していません（「不明」）。\n"
-                     L"タイマーで起きたのなら「タイマー」と記録されるはずなので、別の理由で起きた可能性があります。もう一度試してください。");
+        wcscpy(head, L"判定できません: 予定より早く復帰し、Windows は原因を「不明」と記録しています。\n"
+                     L"タイマー以外の理由で起きたようです。もう一度試してください。");
     swprintf(s, 900, L"%ls\n\n予定 %ls → 復帰 %ls（%+lld 秒）", head, plan, got, delta);
     if (!ours && (v == 0 || v == 2))
         wcsncat(s, L"\n\n今の電源では「スリープ解除タイマーの許可」が有効になっていません。メイン画面の「有効にする」で変更できます。",
@@ -1701,9 +1654,9 @@ static void tray_menu(void) {
 typedef struct { int id, flags; RECT rc; } Anchor;
 static Anchor g_anchors[] = {
     { IDC_LIST, AN_WIDTH | AN_HEIGHT }, { IDC_ADD, AN_BOTTOM }, { IDC_EDIT, AN_BOTTOM },
-    { IDC_COPY, AN_BOTTOM }, { IDC_DEL, AN_BOTTOM }, { IDC_TEST, AN_BOTTOM }, { IDC_SLEEPTEST, AN_BOTTOM },
+    { IDC_COPY, AN_BOTTOM }, { IDC_DEL, AN_BOTTOM }, { IDC_SLEEPTEST, AN_BOTTOM },
     { IDC_STATUS, AN_BOTTOM | AN_WIDTH }, { IDC_FIX_RTC, AN_BOTTOM | AN_RIGHT },
-    { IDC_STARTUP, AN_BOTTOM }, { IDCANCEL, AN_BOTTOM | AN_RIGHT },
+    { IDC_SLEEP_CLOSE, AN_BOTTOM | AN_RIGHT }, { IDCANCEL, AN_BOTTOM | AN_RIGHT },
 };
 static SIZE  g_baseClient;
 static POINT g_minTrack;
@@ -1763,8 +1716,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
             c.cx = dlu_x(d, cols[i].w);
             ListView_InsertColumn(g_list, i, &c);
         }
-        set_check(d, IDC_STARTUP, startup_exists());
-        if (startup_exists()) startup_set(TRUE);   // exe を移していたら付け直す
         anchors_init(d);
         tray_add();
         list_refresh(0);
@@ -1858,7 +1809,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
             EnableWindow(GetDlgItem(d, IDC_EDIT), sel);
             EnableWindow(GetDlgItem(d, IDC_COPY), sel);
             EnableWindow(GetDlgItem(d, IDC_DEL), sel);
-            EnableWindow(GetDlgItem(d, IDC_TEST), sel);
             return TRUE;
         }
         break;
@@ -1877,7 +1827,6 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         case IDC_EDIT: cmd_edit(); return TRUE;
         case IDC_COPY: cmd_copy(); return TRUE;
         case IDC_DEL:  cmd_delete(); return TRUE;
-        case IDC_TEST: cmd_test(); return TRUE;
         case IDC_SLEEPTEST: sleeptest_menu(d); return TRUE;
         case IDM_TEST_SLEEP: sleeptest_start(d, FALSE); return TRUE;
         case IDM_TEST_HIBERNATE: sleeptest_start(d, TRUE); return TRUE;
@@ -1901,14 +1850,10 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
             update_status();
             return TRUE;
         }
-        case IDC_STARTUP: {
-            BOOL on = get_check(d, IDC_STARTUP);
-            if (!startup_set(on)) {
-                MessageBoxW(d, L"スタートアップの設定を変更できませんでした。", APP_NAME, MB_ICONWARNING);
-                set_check(d, IDC_STARTUP, startup_exists());
-            }
+        case IDC_SLEEP_CLOSE:              // スタートメニューからスリープを選ぶ手間を省く
+            ShowWindow(d, SW_HIDE);        // 復帰したときに画面が出たままにならないよう先に隠す
+            do_power(PW_SLEEP);
             return TRUE;
-        }
         case IDCANCEL: hide_main(); return TRUE;
         case IDM_OPEN: show_main(); return TRUE;
         case IDM_EXIT:
